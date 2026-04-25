@@ -1,16 +1,8 @@
 import tkinter as tk 
 from tkinter import ttk, messagebox 
-import csv 
-import os 
+import finance_manager as fm
 
-file_name = "expenses.csv" 
-
-# Create file if not exists 
-if not os.path.exists(file_name): 
-    with open(file_name, "w", newline="") as f: 
-        writer = csv.writer(f) 
-        writer.writerow(["Date", "Category", "Amount", "Description"]) 
-
+file_name = "expenses_gui.csv" 
 
 # -------- Functions -------- 
 def add_expense(): 
@@ -18,22 +10,23 @@ def add_expense():
     category = entry_category.get() 
     amount = entry_amount.get() 
     desc = entry_desc.get() 
+    trans_type = combo_type.get()
 
     if date == "" or category == "" or amount == "": 
         messagebox.showerror("Error", "Please fill all required fields") 
         return 
 
-    try:
-        float(amount)
-    except ValueError:
-        messagebox.showerror("Error", "Amount must be a number")
+    if not fm.validate_date(date):
+        messagebox.showerror("Error", "Please check date format (YYYY-MM-DD)")
+        return
+        
+    if not fm.validate_amount(amount):
+        messagebox.showerror("Error", "Amount must be a number greater than zero")
         return
 
-    with open(file_name, "a", newline="") as f: 
-        writer = csv.writer(f) 
-        writer.writerow([date, category, amount, desc]) 
+    fm.save_transaction(file_name, date, category, amount, desc, trans_type)
 
-    messagebox.showinfo("Success", "Expense Added") 
+    messagebox.showinfo("Success", f"{trans_type} Added") 
 
     clear_fields() 
     load_data() 
@@ -43,41 +36,19 @@ def load_data():
     for row in tree.get_children(): 
         tree.delete(row) 
 
-    if not os.path.exists(file_name):
-        return
-
-    with open(file_name, "r") as f: 
-        reader = csv.reader(f) 
-        try:
-            next(reader) 
-        except StopIteration:
-            return
-
-        for row in reader: 
-            tree.insert("", "end", values=row) 
+    transactions = fm.load_all_transactions(file_name)
+    for row in transactions: 
+        tree.insert("", "end", values=row) 
 
 
 def show_total(): 
-    total = 0 
-    if not os.path.exists(file_name):
-        messagebox.showinfo("Total Expense", "Total: ₹0")
-        return
+    transactions = fm.load_all_transactions(file_name)
+    total_income, total_expenses, balance = fm.calculate_totals(transactions)
 
-    with open(file_name, "r") as f: 
-        reader = csv.reader(f) 
-        try:
-            next(reader) 
-        except StopIteration:
-            messagebox.showinfo("Total Expense", "Total: ₹0")
-            return
-
-        for row in reader: 
-            try:
-                total += float(row[2]) 
-            except (ValueError, IndexError):
-                continue
-
-    messagebox.showinfo("Total Expense", "Total: ₹" + str(total)) 
+    summary = (f"Total Income: ₹{total_income:,.2f}\n"
+               f"Total Expenses: ₹{total_expenses:,.2f}\n"
+               f"Balance: ₹{balance:,.2f}")
+    messagebox.showinfo("Finance Summary", summary) 
 
 
 def clear_fields(): 
@@ -85,6 +56,7 @@ def clear_fields():
     entry_category.delete(0, tk.END) 
     entry_amount.delete(0, tk.END) 
     entry_desc.delete(0, tk.END) 
+    combo_type.set("Expense")
 
 
 # -------- UI -------- 
@@ -108,22 +80,41 @@ tk.Label(root, text="Description").grid(row=3, column=0, padx=10, pady=5)
 entry_desc = tk.Entry(root) 
 entry_desc.grid(row=3, column=1) 
 
+tk.Label(root, text="Type").grid(row=4, column=0, padx=10, pady=5)
+combo_type = ttk.Combobox(root, values=["Expense", "Income"], state="readonly")
+combo_type.grid(row=4, column=1)
+combo_type.set("Expense")
+
 # Buttons 
-tk.Button(root, text="Add Expense", command=add_expense).grid(row=4, column=0, pady=10) 
-tk.Button(root, text="Show Total", command=show_total).grid(row=4, column=1) 
-tk.Button(root, text="Refresh", command=load_data).grid(row=4, column=2) 
+tk.Button(root, text="Add Transaction", command=add_expense).grid(row=5, column=0, pady=10) 
+tk.Button(root, text="Show Summary", command=show_total).grid(row=5, column=1) 
+tk.Button(root, text="Refresh", command=load_data).grid(row=5, column=2) 
 
 # Table 
-tree = ttk.Treeview(root, columns=("Date", "Category", "Amount", "Description"), show="headings") 
+tree_frame = tk.Frame(root)
+tree_frame.grid(row=6, column=0, columnspan=4, padx=10, pady=10, sticky="nsew")
 
-tree.heading("Date", text="Date") 
-tree.heading("Category", text="Category") 
-tree.heading("Amount", text="Amount") 
-tree.heading("Description", text="Description") 
+tree = ttk.Treeview(tree_frame, columns=fm.CSV_HEADER, show="headings") 
 
-tree.grid(row=5, column=0, columnspan=4, padx=10, pady=10) 
+# Add scrollbar (Bug-06)
+scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+tree.configure(yscrollcommand=scrollbar.set)
+scrollbar.pack(side="right", fill="y")
 
-# Load data initially 
+for col in fm.CSV_HEADER:
+    tree.heading(col, text=col)
+    tree.column(col, width=100)
+
+# Hide ID column
+tree.column("ID", width=0, stretch=tk.NO)
+
+tree.pack(side="left", fill="both", expand=True) 
+
+# Configure grid to expand
+root.grid_rowconfigure(6, weight=1)
+root.grid_columnconfigure(0, weight=1)
+
+fm.ensure_csv_exists(file_name)
 load_data() 
 
 if __name__ == "__main__":
